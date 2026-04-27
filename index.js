@@ -12,8 +12,8 @@ app.use(express.json());
 
 // --- THE ABSOLUTE BLUEPRINT ---
 const SCHEMA_PROMPT = `
-You MUST return ONLY a JSON object. NO EXPLANATION. NO EXTRA TEXT.
-Exact Structure:
+Return ONLY a JSON object. NO EXPLANATION. NO EXTRA TEXT.
+Structure:
 {
   "careers": [
     {
@@ -35,11 +35,10 @@ Exact Structure:
 }
 `;
 
-const SYSTEM_PROMPT = `YOU ARE A JSON GENERATOR. Career Counselor Pakistan. suggest 3 careers. ${SCHEMA_PROMPT}`;
+const SYSTEM_PROMPT = `YOU ARE A JSON GENERATOR. ${SCHEMA_PROMPT}`;
 
 const cleanJSON = (text) => {
   if (!text) return "";
-  // Aggressively remove anything before the first { and after the last }
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1) return text;
@@ -47,32 +46,19 @@ const cleanJSON = (text) => {
 };
 
 const tryOpenRouter = async (prompt) => {
-  if (!process.env.OPENROUTER_API_KEY) throw new Error("Key missing.");
-  
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.0-flash-001",
-      messages: [{ role: "user", content: prompt }]
-    })
+    headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "google/gemini-2.0-flash-001", messages: [{ role: "user", content: prompt }] })
   });
-  
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message || "OR API Error");
-  
-  const aiText = data.choices?.[0]?.message?.content;
-  if (!aiText) throw new Error("No choices returned from AI.");
-  
-  return aiText;
+  return data.choices?.[0]?.message?.content;
 };
 
 app.post('/api/analyze-path', async (req, res) => {
-  console.log("\n--- [ABSOLUTE JSON MODE] New Scan ---");
-  const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
+  console.log("\n--- [DIAGNOSTIC SCAN] ---");
+  const prompt = `${SYSTEM_PROMPT}\n\nUser Data: ${JSON.stringify(req.body)}`;
   
   try {
     const rawText = await tryOpenRouter(prompt);
@@ -83,14 +69,13 @@ app.post('/api/analyze-path', async (req, res) => {
       parsedData = JSON.parse(cleanedText);
     } catch (e) {
       console.error("❌ JSON Parse Failed. Raw Text:", rawText);
-      return res.status(500).json({ error: "Invalid AI response structure." });
+      return res.status(500).json({ error: "Invalid AI response." });
     }
     
-    // Final check for structure
     if (parsedData && parsedData.careers) {
-      console.log(`✅ SUCCESS: Correct mapping delivered.`);
-      // Returns { success: true, data: { careers: [], ... } }
-      // This matches App.jsx: setScanAnswers(result.data)
+      // ✅ FINAL CLEAN DATA LOG (VERY IMPORTANT)
+      console.log("FINAL CLEAN DATA:", JSON.stringify(parsedData, null, 2));
+      
       return res.json({ success: true, data: parsedData });
     }
     
@@ -100,4 +85,4 @@ app.post('/api/analyze-path', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Absolute-JSON Backend live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Final Diagnostic Backend live on port ${PORT}`));
