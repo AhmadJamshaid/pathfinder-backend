@@ -19,7 +19,7 @@ const cleanJSON = (text) => {
 };
 
 const tryOpenRouter = async (prompt) => {
-  // Check key exists
+  // Check key visibility
   console.log("API Key Check:", process.env.OPENROUTER_API_KEY ? "✅ KEY FOUND" : "❌ KEY MISSING");
   
   if (!process.env.OPENROUTER_API_KEY) {
@@ -42,13 +42,20 @@ const tryOpenRouter = async (prompt) => {
   
   const data = await response.json();
   
+  // --- HIGH VISIBILITY LOGGING (VERY IMPORTANT) ---
+  console.log("OpenRouter response:", JSON.stringify(data, null, 2));
+  
   if (!response.ok) {
-    console.error("OpenRouter Error Details:", JSON.stringify(data));
-    throw new Error(data.error?.message || "OpenRouter Request Failed");
+    throw new Error(data.error?.message || `HTTP ${response.status} Error`);
   }
   
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("No content returned from OpenRouter.");
+  // --- STRICT VALIDATION ---
+  if (!data.choices || data.choices.length === 0) {
+    throw new Error("OpenRouter API returned no choices. Check your credits or model status.");
+  }
+  
+  const content = data.choices[0].message?.content;
+  if (!content) throw new Error("Choice found but message content is empty.");
   
   return content;
 };
@@ -58,18 +65,19 @@ app.post('/api/analyze-path', async (req, res) => {
   const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
   
   try {
+    // Phase: OpenRouter ONLY (TEMPORARY DEBUG MODE)
     const rawText = await tryOpenRouter(prompt);
     const cleaned = cleanJSON(rawText);
     const finalResult = JSON.parse(cleaned);
     
     if (finalResult && finalResult.careers) {
-      console.log(`✅ SUCCESS: Analysis fulfilled.`);
+      console.log(`✅ SUCCESS: Analysis fulfilled by OpenRouter`);
       return res.json({ success: true, provider: "OpenRouter", data: finalResult });
     }
   } catch (e) {
-    console.error(`❌ FAILURE:`, e.message);
-    return res.status(503).json({ error: `AI Error: ${e.message}` });
+    console.error(`❌ FAILURE in OpenRouter:`, e.message);
+    return res.status(503).json({ error: `AI Analysis Error: ${e.message}` });
   }
 });
 
-app.listen(PORT, () => console.log(`OpenRouter-Sync Backend live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Debug-Mode Backend live on port ${PORT}`));
