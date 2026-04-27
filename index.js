@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// --- THE MANDATORY BLUEPRINT (Synced with ResultsSection.jsx) ---
+// --- THE MANDATORY BLUEPRINT ---
 const SCHEMA_PROMPT = `
 You MUST return ONLY a JSON object with this exact structure:
 {
@@ -20,36 +20,24 @@ You MUST return ONLY a JSON object with this exact structure:
       "match": number,
       "demandTag": "string",
       "attributeTag": "string",
-      "role_overview": "Detailed summary of the career",
-      "why_fit": "One sentence explaining why this fits the user",
-      "income": "Expected PKR salary/month",
-      "time_to_earn": "Time until first paycheck",
-      "skills": [
-        { "name": "string", "simple_explanation": "string", "type": "core|secondary" }
-      ],
-      "roadmap": [
-        { "title": "Step title", "desc": "Actionable instruction" }
-      ]
+      "role_overview": "string",
+      "why_fit": "string",
+      "income": "string",
+      "time_to_earn": "string",
+      "skills": [{ "name": "string", "simple_explanation": "string", "type": "core|secondary" }],
+      "roadmap": [{ "title": "string", "desc": "string" }]
     }
   ],
-  "reality_check": {
-    "competition": "Describe competition level in Pakistan",
-    "risk": "Describe the risk involved",
-    "effort": "Describe intensity required"
-  },
-  "alternative_paths": [
-    { "title": "string", "description": "string" }
-  ],
-  "what_to_avoid": [
-    { "pitfall": "string", "reason": "string" }
-  ]
+  "reality_check": { "competition": "string", "risk": "string", "effort": "string" },
+  "alternative_paths": [{ "title": "string", "description": "string" }],
+  "what_to_avoid": [{ "pitfall": "string", "reason": "string" }]
 }
 `;
 
 const SYSTEM_PROMPT = `Career Counselor Pakistan. suggest 3 careers. ${SCHEMA_PROMPT}`;
 
 const cleanJSON = (text) => {
-  if (!text) throw new Error("Empty response from AI");
+  if (!text) return "";
   return text.replace(/```json/g, '').replace(/```/g, '').trim();
 };
 
@@ -71,29 +59,39 @@ const tryOpenRouter = async (prompt) => {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message || "OR API Error");
   
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("No content returned.");
+  // ✅ Extract raw content string
+  const aiText = data.choices?.[0]?.message?.content;
+  if (!aiText) throw new Error("No choices returned from AI.");
   
-  return content;
+  return aiText;
 };
 
 app.post('/api/analyze-path', async (req, res) => {
-  console.log("\n--- [SYNC MODE] New Career Scan ---");
+  console.log("\n--- [STRICT PARSE MODE] New Scan ---");
   const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
   
   try {
-    const rawText = await tryOpenRouter(prompt);
-    const cleaned = cleanJSON(rawText);
-    const finalResult = JSON.parse(cleaned);
+    const rawAiResponse = await tryOpenRouter(prompt);
+    const cleanedText = cleanJSON(rawAiResponse);
     
-    if (finalResult && finalResult.careers) {
-      console.log(`✅ SUCCESS: Analysis fulfilled and synced.`);
-      return res.json({ success: true, provider: "OpenRouter", data: finalResult });
+    // ✅ Strict JSON Parse with Catch
+    let parsedData;
+    try {
+      parsedData = JSON.parse(cleanedText);
+    } catch (parseError) {
+      console.error("❌ JSON Parse Failed. Raw Text:", cleanedText);
+      return res.status(500).json({ error: "Invalid AI response structure." });
     }
-  } catch (e) {
-    console.error(`❌ FAILURE:`, e.message);
-    return res.status(503).json({ error: `AI Error: ${e.message}` });
+    
+    if (parsedData && parsedData.careers) {
+      console.log(`✅ SUCCESS: Valid JSON received.`);
+      return res.json({ success: true, provider: "OpenRouter", data: parsedData });
+    }
+    
+  } catch (err) {
+    console.error(`❌ GLOBAL FAILURE:`, err.message);
+    return res.status(503).json({ error: `System Error: ${err.message}` });
   }
 });
 
-app.listen(PORT, () => console.log(`Sync-Master Backend live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Strict-Parse Backend live on port ${PORT}`));
