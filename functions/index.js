@@ -47,7 +47,7 @@ User Profile:
 - Context: ${aiProcessingPayload.additionalContext}
     `.trim();
 
-    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
     
     const result = await model.generateContent({
       contents: [{ role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\n${userProfileText}` }] }],
