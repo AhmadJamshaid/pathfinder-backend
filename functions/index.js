@@ -9,49 +9,47 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
 
-const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite-001'];
-
-const generateWithOpenRouter = async (prompt) => {
-  if (!process.env.OPENROUTER_API_KEY) throw new Error("No OpenRouter Key");
-  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+const callAPI = async (url, key, model, prompt) => {
+  const r = await fetch(url, {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      "model": "meta-llama/llama-3-8b-instruct:free",
-      "messages": [{ "role": "user", "content": prompt }]
-    })
+    headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }] })
   });
-  const data = await resp.json();
-  return data.choices[0].message.content;
+  const d = await r.json();
+  return d.choices[0].message.content;
 };
 
 app.post("/analyze-path", async (req, res) => {
   try {
-    const prompt = `Career Counselor for Pakistan. JSON ONLY. Data: ${JSON.stringify(req.body)}`;
-    let finalResult = null;
+    const prompt = `Career Counselor Pakistan. JSON ONLY. Data: ${JSON.stringify(req.body)}`;
+    let result = null;
 
-    for (const m of GEMINI_MODELS) {
+    // 1. Gemini
+    try {
+      const m = ai.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const g = await m.generateContent(prompt);
+      result = JSON.parse(g.response.text().replace(/```json/g, '').replace(/```/g, ''));
+    } catch (e) {}
+
+    // 2. OpenRouter
+    if (!result) {
       try {
-        const model = ai.getGenerativeModel({ model: m });
-        const res = await model.generateContent(prompt);
-        finalResult = JSON.parse(res.response.text().replace(/```json/g, '').replace(/```/g, '').trim());
-        break;
+        const t = await callAPI("https://openrouter.ai/api/v1/chat/completions", process.env.OPENROUTER_API_KEY, "meta-llama/llama-3-8b-instruct:free", prompt);
+        result = JSON.parse(t.replace(/```json/g, '').replace(/```/g, ''));
       } catch (e) {}
     }
 
-    if (!finalResult) {
+    // 3. Groq
+    if (!result) {
       try {
-        const text = await generateWithOpenRouter(prompt);
-        finalResult = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+        const t = await callAPI("https://api.groq.com/openai/v1/chat/completions", process.env.GROQ_API_KEY, "llama3-8b-8192", prompt);
+        result = JSON.parse(t.replace(/```json/g, '').replace(/```/g, ''));
       } catch (e) {}
     }
 
-    return finalResult ? res.json({ success: true, data: finalResult }) : res.status(500).send("Error");
+    return result ? res.json({ success: true, data: result }) : res.status(500).send("All failed");
   } catch (e) {
-    return res.status(500).send("Error");
+    return res.status(500).send("System error");
   }
 });
 
