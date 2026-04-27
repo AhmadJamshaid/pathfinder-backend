@@ -10,9 +10,10 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// --- THE MANDATORY BLUEPRINT ---
+// --- THE ABSOLUTE BLUEPRINT ---
 const SCHEMA_PROMPT = `
-You MUST return ONLY a JSON object with this exact structure:
+You MUST return ONLY a JSON object. NO EXPLANATION. NO EXTRA TEXT.
+Exact Structure:
 {
   "careers": [
     {
@@ -34,11 +35,15 @@ You MUST return ONLY a JSON object with this exact structure:
 }
 `;
 
-const SYSTEM_PROMPT = `Career Counselor Pakistan. suggest 3 careers. ${SCHEMA_PROMPT}`;
+const SYSTEM_PROMPT = `YOU ARE A JSON GENERATOR. Career Counselor Pakistan. suggest 3 careers. ${SCHEMA_PROMPT}`;
 
 const cleanJSON = (text) => {
   if (!text) return "";
-  return text.replace(/```json/g, '').replace(/```/g, '').trim();
+  // Aggressively remove anything before the first { and after the last }
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1) return text;
+  return text.substring(start, end + 1).trim();
 };
 
 const tryOpenRouter = async (prompt) => {
@@ -59,7 +64,6 @@ const tryOpenRouter = async (prompt) => {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message || "OR API Error");
   
-  // ✅ Extract raw content string
   const aiText = data.choices?.[0]?.message?.content;
   if (!aiText) throw new Error("No choices returned from AI.");
   
@@ -67,31 +71,33 @@ const tryOpenRouter = async (prompt) => {
 };
 
 app.post('/api/analyze-path', async (req, res) => {
-  console.log("\n--- [STRICT PARSE MODE] New Scan ---");
+  console.log("\n--- [ABSOLUTE JSON MODE] New Scan ---");
   const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
   
   try {
-    const rawAiResponse = await tryOpenRouter(prompt);
-    const cleanedText = cleanJSON(rawAiResponse);
+    const rawText = await tryOpenRouter(prompt);
+    const cleanedText = cleanJSON(rawText);
     
-    // ✅ Strict JSON Parse with Catch
     let parsedData;
     try {
       parsedData = JSON.parse(cleanedText);
-    } catch (parseError) {
-      console.error("❌ JSON Parse Failed. Raw Text:", cleanedText);
+    } catch (e) {
+      console.error("❌ JSON Parse Failed. Raw Text:", rawText);
       return res.status(500).json({ error: "Invalid AI response structure." });
     }
     
+    // Final check for structure
     if (parsedData && parsedData.careers) {
-      console.log(`✅ SUCCESS: Valid JSON received.`);
-      return res.json({ success: true, provider: "OpenRouter", data: parsedData });
+      console.log(`✅ SUCCESS: Correct mapping delivered.`);
+      // Returns { success: true, data: { careers: [], ... } }
+      // This matches App.jsx: setScanAnswers(result.data)
+      return res.json({ success: true, data: parsedData });
     }
     
   } catch (err) {
-    console.error(`❌ GLOBAL FAILURE:`, err.message);
+    console.error(`❌ FAILURE:`, err.message);
     return res.status(503).json({ error: `System Error: ${err.message}` });
   }
 });
 
-app.listen(PORT, () => console.log(`Strict-Parse Backend live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Absolute-JSON Backend live on port ${PORT}`));
