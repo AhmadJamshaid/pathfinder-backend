@@ -23,11 +23,13 @@ const cleanJSON = (text) => {
 // --- ENGINES ---
 
 const tryGemini = async (prompt) => {
-  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is missing from Vercel environment variables.");
+  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is missing.");
   const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const result = await ai.getGenerativeModel({ model: "gemini-2.0-flash" }).generateContent(prompt);
   const response = await result.response;
-  return response.text();
+  const text = response.text();
+  if (!text) throw new Error("Gemini returned empty text.");
+  return text;
 };
 
 const tryOpenRouter = async (prompt) => {
@@ -39,7 +41,9 @@ const tryOpenRouter = async (prompt) => {
   });
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message || "OpenRouter HTTP Error");
-  return d.choices[0].message.content;
+  const content = d.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenRouter returned no content.");
+  return content;
 };
 
 const tryGroq = async (prompt) => {
@@ -51,7 +55,9 @@ const tryGroq = async (prompt) => {
   });
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message || "Groq HTTP Error");
-  return d.choices[0].message.content;
+  const content = d.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Groq returned no content.");
+  return content;
 };
 
 const tryCohere = async (prompt) => {
@@ -63,7 +69,9 @@ const tryCohere = async (prompt) => {
   });
   const d = await r.json();
   if (!r.ok) throw new Error(d.message || "Cohere HTTP Error");
-  return d.text;
+  const text = d.text;
+  if (!text) throw new Error("Cohere returned no text.");
+  return text;
 };
 
 app.post('/api/analyze-path', async (req, res) => {
@@ -85,11 +93,6 @@ app.post('/api/analyze-path', async (req, res) => {
       console.log(`Phase: Attempting ${p.name}...`);
       const rawText = await p.fn(prompt);
       
-      if (!rawText) {
-        console.warn(`${p.name} returned empty text.`);
-        continue;
-      }
-
       const cleaned = cleanJSON(rawText);
       finalResult = JSON.parse(cleaned);
       
@@ -100,7 +103,6 @@ app.post('/api/analyze-path', async (req, res) => {
       }
     } catch (e) {
       console.error(`ERROR in ${p.name}:`, e.message);
-      // Continue to next provider
     }
   }
 
@@ -108,7 +110,6 @@ app.post('/api/analyze-path', async (req, res) => {
     return res.json({ success: true, provider: successfulProvider, data: finalResult });
   }
 
-  console.error("CRITICAL: All 4 providers failed.");
   return res.status(503).json({ error: 'All AI services are currently unavailable. Please check your API keys in Vercel.' });
 });
 
