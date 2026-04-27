@@ -9,44 +9,49 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
 
-const MODEL_FALLBACK_LIST = [
-  'gemini-2.0-flash',
-  'gemini-2.0-flash-lite-001',
-  'gemini-2.5-flash'
-];
+const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite-001'];
+
+const generateWithOpenRouter = async (prompt) => {
+  if (!process.env.OPENROUTER_API_KEY) throw new Error("No OpenRouter Key");
+  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      "model": "meta-llama/llama-3-8b-instruct:free",
+      "messages": [{ "role": "user", "content": prompt }]
+    })
+  });
+  const data = await resp.json();
+  return data.choices[0].message.content;
+};
 
 app.post("/analyze-path", async (req, res) => {
   try {
-    const userData = req.body;
-    const SYSTEM_PROMPT = "You are a friendly career counselor for students in Pakistan. Output EXACTLY 3 career options in valid JSON.";
-    const userProfileText = `User Data: ${JSON.stringify(userData)}`;
-
+    const prompt = `Career Counselor for Pakistan. JSON ONLY. Data: ${JSON.stringify(req.body)}`;
     let finalResult = null;
 
-    for (const modelName of MODEL_FALLBACK_LIST) {
+    for (const m of GEMINI_MODELS) {
       try {
-        const model = ai.getGenerativeModel({ model: modelName });
-        const result = await model.generateContent({
-          contents: [{ role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\n${userProfileText}` }] }],
-          generationConfig: { responseMimeType: "application/json" }
-        });
-
-        const rawText = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-        finalResult = JSON.parse(rawText);
+        const model = ai.getGenerativeModel({ model: m });
+        const res = await model.generateContent(prompt);
+        finalResult = JSON.parse(res.response.text().replace(/```json/g, '').replace(/```/g, '').trim());
         break;
-      } catch (err) {
-        console.error(`Model ${modelName} failed.`);
-      }
+      } catch (e) {}
     }
 
-    if (finalResult) {
-      return res.json({ success: true, data: finalResult });
-    } else {
-      return res.status(500).json({ error: 'All AI models are busy.' });
+    if (!finalResult) {
+      try {
+        const text = await generateWithOpenRouter(prompt);
+        finalResult = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+      } catch (e) {}
     }
 
-  } catch (error) {
-    return res.status(500).json({ error: 'Server error.' });
+    return finalResult ? res.json({ success: true, data: finalResult }) : res.status(500).send("Error");
+  } catch (e) {
+    return res.status(500).send("Error");
   }
 });
 
