@@ -100,10 +100,10 @@ User Profile:
 - Additional Context: ${aiProcessingPayload.additionalContext}
     `.trim();
 
-    const generateWithRetry = async (payload, attempts = 5) => {
+    const generateWithRetry = async (model, payload, attempts = 5) => {
       for (let i = 0; i < attempts; i++) {
         try {
-          return await ai.models.generateContent(payload);
+          return await model.generateContent(payload);
         } catch (err) {
           const isRetryable = err.status === 503 || err.status === 429;
           if (isRetryable && i < attempts - 1) {
@@ -116,7 +116,7 @@ User Profile:
     };
 
     const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const aiResult = await generateWithRetry({
+    const aiResult = await generateWithRetry(model, {
       contents: [{ role: 'user', parts: [{ text: userProfileText }] }],
       generationConfig: {
         responseMimeType: "application/json"
