@@ -10,48 +10,61 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// --- THE STRICT BLUEPRINT ---
+// --- THE ULTRA-DETAIL BLUEPRINT ---
 const SCHEMA_PROMPT = `
-You MUST return ONLY a JSON object. NO PLACEHOLDERS (like "--" or "Evaluating").
-Every field MUST be filled with detailed, real information.
+You MUST return ONLY a JSON object. NO CONVERSATION.
+Every field MUST be filled with high-depth, professional information.
 
 Structure:
 {
   "careers": [
     {
-      "title": "Official Career Name",
+      "title": "Professional Title",
       "match": number (70-100),
-      "demandTag": "e.g. High Demand",
-      "attributeTag": "e.g. Creative",
-      "role_overview": "A 20-word detailed summary of this job in Pakistan.",
-      "why_fit": "A specific sentence explaining why this matches their strengths.",
-      "income": "Realistic monthly PKR salary (e.g. 80,000 - 150,000 PKR)",
-      "time_to_earn": "Time until first paycheck (e.g. 3-6 months)",
+      "demandTag": "High/Growing Demand",
+      "attributeTag": "Key Personality Fit",
+      "role_overview": "A 50-word professional deep-dive into this career in the Pakistani context. Describe daily tasks, work-life balance, and long-term growth.",
+      "why_fit": "Explain exactly how this matches the user's specific answers.",
+      "income": "Realistic monthly PKR salary range (e.g. 100k - 200k PKR)",
+      "time_to_earn": "Time until first income (e.g. 4-7 months)",
       "skills": [
-        { "name": "Skill Name", "simple_explanation": "What it is", "type": "core" },
-        { "name": "Skill Name 2", "simple_explanation": "What it is", "type": "secondary" }
+        { "name": "Skill 1", "simple_explanation": "Detailed explanation", "type": "core" },
+        { "name": "Skill 2", "simple_explanation": "Detailed explanation", "type": "secondary" }
       ],
       "roadmap": [
-        { "title": "Phase 1", "desc": "Specific actionable steps to start." },
-        { "title": "Phase 2", "desc": "How to get the first client or job." }
+        { "title": "Step 1: Foundational Learning", "desc": "Detailed instructions for month 1." },
+        { "title": "Step 2: Skill Specialization", "desc": "Detailed instructions for month 2." },
+        { "title": "Step 3: Portfolio Building", "desc": "Specific projects to complete." },
+        { "title": "Step 4: Market Entry", "desc": "How to find the first client in Pakistan." },
+        { "title": "Step 5: Income Scaling", "desc": "How to increase rates." },
+        { "title": "Step 6: Career Mastery", "desc": "Long-term goal and certification." }
       ]
     }
   ],
   "reality_check": {
-    "competition": "Detailed description of Pakistan's market competition.",
-    "risk": "Detailed description of financial or career risks.",
-    "effort": "Detailed description of daily work intensity."
+    "competition": "Deep analysis of the competitive landscape in Pakistan.",
+    "risk": "Detailed financial and professional risks.",
+    "effort": "Real talk about the hours and mental energy required."
   },
   "alternative_paths": [
-    { "title": "Backup Career", "description": "Why this is a good secondary option." }
+    { "title": "Option 1", "description": "Why this is a solid backup." },
+    { "title": "Option 2", "description": "Why this is a solid backup." },
+    { "title": "Option 3", "description": "Why this is a solid backup." }
   ],
   "what_to_avoid": [
-    { "pitfall": "Specific mistake to avoid", "reason": "Why it hurts your career" }
+    { "pitfall": "Mistake 1", "reason": "Why it is dangerous." },
+    { "pitfall": "Mistake 2", "reason": "Why it is dangerous." },
+    { "pitfall": "Mistake 3", "reason": "Why it is dangerous." },
+    { "pitfall": "Mistake 4", "reason": "Why it is dangerous." }
   ]
 }
 `;
 
-const SYSTEM_PROMPT = `YOU ARE A SENIOR CAREER ADVISOR. Suggest EXACTLY 3 careers. NO CONVERSATION. NO LAME ANSWERS. ${SCHEMA_PROMPT}`;
+const SYSTEM_PROMPT = `YOU ARE A SENIOR CAREER CONSULTANT. Suggest exactly 3 careers. 
+Be comprehensive and deep. Your roadmap MUST HAVE EXACTLY 6 STEPS. 
+Your Alternative Paths MUST HAVE EXACTLY 3. 
+Your What To Avoid MUST HAVE EXACTLY 4.
+Write like a mentor who wants the student to win. ${SCHEMA_PROMPT}`;
 
 const cleanJSON = (text) => {
   if (!text) return "";
@@ -63,46 +76,31 @@ const cleanJSON = (text) => {
 
 const tryOpenRouter = async (prompt) => {
   if (!process.env.OPENROUTER_API_KEY) throw new Error("Key missing.");
-  
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ 
-      model: "google/gemini-2.0-flash-001", 
-      messages: [{ role: "user", content: prompt }] 
-    })
+    body: JSON.stringify({ model: "google/gemini-2.0-flash-001", messages: [{ role: "user", content: prompt }] })
   });
-  
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message || "OR API Error");
   return data.choices?.[0]?.message?.content;
 };
 
 app.post('/api/analyze-path', async (req, res) => {
-  console.log("\n--- [STRICT DATA MODE] New Scan ---");
-  const prompt = `${SYSTEM_PROMPT}\n\nUser Data: ${JSON.stringify(req.body)}`;
-  
+  console.log("\n--- [ULTRA-DETAIL MODE] New Scan ---");
+  const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
   try {
     const rawText = await tryOpenRouter(prompt);
     const cleanedText = cleanJSON(rawText);
-    
-    let parsedData;
-    try {
-      parsedData = JSON.parse(cleanedText);
-    } catch (e) {
-      console.error("❌ JSON Parse Failed. Raw Text:", rawText);
-      return res.status(500).json({ error: "Invalid AI response." });
-    }
-    
+    const parsedData = JSON.parse(cleanedText);
     if (parsedData && parsedData.careers) {
-      console.log("FINAL CLEAN DATA:", JSON.stringify(parsedData, null, 2));
+      console.log("SUCCESS: Deep Analysis Delivered.");
       return res.json({ success: true, data: parsedData });
     }
-    
   } catch (err) {
     console.error(`❌ FAILURE:`, err.message);
     return res.status(503).json({ error: `System Error: ${err.message}` });
   }
 });
 
-app.listen(PORT, () => console.log(`Data-Enforcer Backend live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Ultra-Detail Backend live on port ${PORT}`));
