@@ -16,14 +16,8 @@ const SYSTEM_PROMPT = `Career Counselor Pakistan. suggest 3 careers. ${SCHEMA_PR
 
 // --- UTILS ---
 const cleanJSON = (text) => {
-  // CRITICAL FIX: Ensure text exists before using .replace()
-  if (!text) {
-    throw new Error("Empty response from AI");
-  }
-  
-  // Safe to use replace now
-  const safeResult = text.replace(/```json/g, '').replace(/```/g, '').trim();
-  return safeResult;
+  if (!text) throw new Error("Empty response from AI");
+  return text.replace(/```json/g, '').replace(/```/g, '').trim();
 };
 
 // --- ENGINES ---
@@ -33,8 +27,7 @@ const tryGemini = async (prompt) => {
   const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const result = await ai.getGenerativeModel({ model: "gemini-2.0-flash" }).generateContent(prompt);
   const response = await result.response;
-  const text = response.text();
-  return text; // Main loop handles the null check via cleanJSON
+  return response.text();
 };
 
 const tryOpenRouter = async (prompt) => {
@@ -74,7 +67,7 @@ const tryCohere = async (prompt) => {
 };
 
 app.post('/api/analyze-path', async (req, res) => {
-  console.log("--- New Scan Request Received ---");
+  console.log("\n--- [START] New Career Scan ---");
   const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
   
   const providers = [
@@ -89,20 +82,20 @@ app.post('/api/analyze-path', async (req, res) => {
 
   for (const p of providers) {
     try {
-      console.log(`Phase: Attempting ${p.name}...`);
+      console.log(`[DEBUG] Trying ${p.name}...`);
       const rawText = await p.fn(prompt);
       
-      // cleanJSON will throw if rawText is empty/null
       const cleaned = cleanJSON(rawText);
       finalResult = JSON.parse(cleaned);
       
       if (finalResult && finalResult.careers) {
         successfulProvider = p.name;
-        console.log(`SUCCESS: Analysis fulfilled by ${p.name}`);
+        console.log(`✅ SUCCESS: Result found using ${p.name}`);
         break;
       }
     } catch (e) {
-      console.error(`ERROR in ${p.name}:`, e.message);
+      console.error(`❌ ${p.name} Failed: ${e.message}`);
+      // Loop continues to next provider
     }
   }
 
@@ -110,7 +103,8 @@ app.post('/api/analyze-path', async (req, res) => {
     return res.json({ success: true, provider: successfulProvider, data: finalResult });
   }
 
+  console.error("⛔ [CRITICAL] All 4 providers failed to fulfill the request.");
   return res.status(503).json({ error: 'All AI services are currently unavailable. Please try again later.' });
 });
 
-app.listen(PORT, () => console.log(`Server live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Backend server listening on port ${PORT}`));
