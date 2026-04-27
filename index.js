@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config(); // Loads .env from current directory
 
@@ -9,7 +9,7 @@ dotenv.config(); // Loads .env from current directory
 if (!process.env.GEMINI_API_KEY) {
   console.warn("WARNING: GEMINI_API_KEY is not set in the environment variables!");
 }
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,7 +26,6 @@ app.get('/api/health', (req, res) => {
 // POST Route to analyze user data
 app.post('/api/analyze-path', async (req, res) => {
   try {
-    // Destructure the expected 8 fields from the frontend scan
     const { 
       interests, 
       strengths, 
@@ -40,29 +39,21 @@ app.post('/api/analyze-path', async (req, res) => {
 
     console.log("Analyzing path for user data...");
     
-    // Basic validation
     if (!core_goal && !career_intent) {
       return res.status(400).json({ error: 'Missing critical user scanning data.' });
     }
 
-    // Structure incoming data into a clean JSON object for AI processing
     const aiProcessingPayload = {
-      interests: interests || "",
-      skills: strengths || "",
-      skillLevel: skill_level || "",
-      preferences: work_preference || "",
-      intent: career_intent || "",
-      goal: core_goal || "",
-      time: time_commitment || "",
-      additionalContext: extra_depth || ""
+      interests: interests || "Not provided",
+      skills: strengths || "Not provided",
+      skillLevel: skill_level || "Not provided",
+      preferences: work_preference || "Not provided",
+      intent: career_intent || "Not provided",
+      goal: core_goal || "Not provided",
+      time: time_commitment || "Not provided",
+      additionalContext: extra_depth || "Not provided"
     };
 
-    console.log("Clean JSON payload prepared for AI:", aiProcessingPayload);
-
-    // -------------------------------------------------------------
-    // Connecting to Gemini API
-    // -------------------------------------------------------------
-    
     const SYSTEM_PROMPT = `
 You are a friendly and helpful career counselor for students. Your job is to give clear, easy-to-understand career advice.
 
@@ -79,37 +70,17 @@ You are a friendly and helpful career counselor for students. Your job is to giv
 - Do not use complex sentences or difficult vocabulary.
 - Do not use long paragraphs. Keep descriptions short and sweet.
 - Use very simple, easy English.
-- Avoid technical jargon (big "work words").
+- Avoid technical jargon.
 - Use short sentences.
 - Explain things in plain English.
-- Use examples where helpful to explain a career or a task.
 - Be honest but encouraging.
-
-**SECTIONS TO MAKE ESPECIALLY SIMPLE:**
-1. **Why It Fits You**: Explain in very basic terms why this job is good for them based on what they like.
-2. **Step-by-step Roadmap**: Use short, clear actions (what to do). Use simple steps. Do not use complex project names or industry terms.
-3. **Reality Check**: Explain the hard parts (competition, risk, effort) using simple stories or metaphors.
-
-**SKILLS REQUIREMENTS:**
-- For each required skill, you MUST add a short and simple explanation.
-- Example: Python -> "A programming language used for data and automation"
-- Example: Critical Thinking -> "Thinking carefully to solve problems"
 
 **GEOGRAPHIC FOCUS:**
 - All advice must be specifically for the Pakistan market. 
 - Use local salary estimates in PKR.
-- Suggest jobs that are actually available in Pakistan or as remote work from Pakistan.
-
-**HANDLING MISSING DATA:**
-- If a user skips a question, the data will be "Not provided". 
-- If critical data is missing, make your best guess based on other fields.
-- Always provide 3 career options, even if the user gave very little information.
-- Use a general but helpful tone if you don't have enough specific details.
 
 **STRICT OUTPUT PROTOCOL:**
-Return ONLY the requested analysis: careers (exactly 3 options), reality_check (competition, risk, effort), alternative_paths (1-2 options), and what_to_avoid (mistakes). 
-For EACH career, include: title, role_overview, why_fit, income (PKR), time to start earning, skills (name and simple_explanation), and a simple roadmap.
-Force your entire response in strict valid JSON format. Provide absolutely NO extra text or markdown wrappers. If output is not valid JSON, the response will be rejected.
+Return ONLY a valid JSON object with: careers (exactly 3 options), reality_check, alternative_paths, and what_to_avoid.
     `.trim();
 
     const userProfileText = `
@@ -124,16 +95,22 @@ User Profile:
 - Additional Context: ${aiProcessingPayload.additionalContext}
     `.trim();
 
-    // Helper for retrying AI requests
-    const generateWithRetry = async (payload, attempts = 5) => {
+    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    
+    // Stable method for content generation with retry logic
+    const generateWithRetry = async (prompt, attempts = 3) => {
       for (let i = 0; i < attempts; i++) {
         try {
-          return await ai.models.generateContent(payload);
+          const result = await model.generateContent({
+            contents: [{ role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\n${prompt}` }] }],
+            generationConfig: {
+              responseMimeType: "application/json"
+            }
+          });
+          return result.response.text();
         } catch (err) {
-          const isRetryable = err.status === 503 || err.status === 429;
-          if (isRetryable && i < attempts - 1) {
-            console.warn(`AI Request failed with ${err.status}. Retrying in ${3000 * (i + 1)}ms...`);
-            await new Promise(resolve => setTimeout(resolve, 3000 * (i + 1)));
+          if ((err.status === 503 || err.status === 429) && i < attempts - 1) {
+            await new Promise(r => setTimeout(r, 2000 * (i + 1)));
             continue;
           }
           throw err;
@@ -141,119 +118,9 @@ User Profile:
       }
     };
 
-    const response = await generateWithRetry({
-      model: 'gemini-1.5-flash',
-      contents: [{ role: 'user', parts: [{ text: userProfileText }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            careers: {
-              type: "ARRAY",
-              description: "Provide exactly 3 highly specific career suggestions.",
-              items: {
-                type: "OBJECT",
-                properties: {
-                  title: { type: "STRING" },
-                  role_overview: { type: "STRING", description: "A short, simple explanation of the role." },
-                  why_fit: { type: "STRING", description: "Explain in very basic terms why this job is good for them." },
-                  income: { type: "STRING", description: "Potential mapped to real world brackets." },
-                  time_to_earn: { type: "STRING", description: "Realistic timeframe." },
-                  skills: {
-                    type: "ARRAY",
-                    items: {
-                      type: "OBJECT",
-                      properties: { 
-                        name: { type: "STRING" }, 
-                        simple_explanation: { type: "STRING", description: "A very simple, short explanation of what this skill is." },
-                        type: { type: "STRING", description: "'core', 'secondary', or 'soft'" } 
-                      },
-                      required: ["name", "simple_explanation", "type"]
-                    }
-                  },
-                  roadmap: {
-                    type: "ARRAY",
-                    items: {
-                      type: "OBJECT",
-                      properties: { title: { type: "STRING" }, desc: { type: "STRING" } },
-                      required: ["title", "desc"]
-                    }
-                  },
-                  match: { type: "INTEGER", description: "Percentage match (0-100)" },
-                  demandTag: { type: "STRING" },
-                  attributeTag: { type: "STRING" }
-                },
-                required: ["title", "role_overview", "why_fit", "income", "time_to_earn", "skills", "roadmap", "match", "demandTag", "attributeTag"]
-              }
-            },
-            reality_check: {
-              type: "OBJECT",
-              properties: {
-                competition: { type: "STRING" },
-                risk: { type: "STRING" },
-                effort: { type: "STRING" }
-              },
-              required: ["competition", "risk", "effort"]
-            },
-            alternative_paths: {
-              type: "ARRAY",
-              description: "Suggest 1-2 other related career options.",
-              items: {
-                type: "OBJECT",
-                properties: {
-                  title: { type: "STRING" },
-                  description: { type: "STRING", description: "Why it might be a good backup." }
-                },
-                required: ["title", "description"]
-              }
-            },
-            what_to_avoid: {
-              type: "ARRAY",
-              description: "List 2-3 mistakes or wrong career paths the user should explicitly avoid based on their profile.",
-              items: {
-                type: "OBJECT",
-                properties: {
-                  pitfall: { type: "STRING" },
-                  reason: { type: "STRING" }
-                },
-                required: ["pitfall", "reason"]
-              }
-            }
-          },
-          required: ["careers", "reality_check", "alternative_paths", "what_to_avoid"]
-        }
-      }
-    });
+    const rawText = await generateWithRetry(userProfileText);
+    const analysisResult = JSON.parse(rawText);
 
-    // Parse response properly
-    const rawText = response.response.text();
-
-    let analysisResult;
-    try {
-      analysisResult = JSON.parse(rawText);
-    } catch (parseError) {
-      console.error("JSON Parse Failed:", rawText);
-      
-      // Smart Fallback to prevent app crash
-      return res.json({
-        success: true,
-        data: {
-          careers: [],
-          reality_check: {
-            competition: "Unknown",
-            risk: "Unknown",
-            effort: "Unknown"
-          },
-          alternative_paths: [],
-          what_to_avoid: []
-        }
-      });
-    }
-    
-    console.log("Successfully parsed AI response. Sending back to frontend.");
-
-    // Send response back to frontend cleanly
     return res.json({
       success: true,
       data: analysisResult
