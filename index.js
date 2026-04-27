@@ -18,7 +18,7 @@ app.get('/api/status', (req, res) => {
       Groq: !!process.env.GROQ_API_KEY,
       Gemini: !!process.env.GEMINI_API_KEY
     },
-    deployment: "Vercel / Speed-Boosted"
+    deployment: "Vercel / Groq-Primary"
   });
 });
 
@@ -33,10 +33,30 @@ const cleanJSON = (text) => {
   return text.substring(start, end + 1).trim();
 };
 
+const tryGroq = async (prompt) => {
+  if (!process.env.GROQ_API_KEY) throw new Error("Groq Key missing.");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000); // 5s for Groq
+
+  try {
+    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "llama3-8b-8192", messages: [{ role: "user", content: prompt }] }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error?.message || "Groq Error");
+    return d.choices?.[0]?.message?.content;
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error("Groq timeout");
+    throw e;
+  }
+};
+
 const tryOpenRouter = async (prompt) => {
   if (!process.env.OPENROUTER_API_KEY) throw new Error("OR Key missing.");
-  
-  // ⏳ 4-Second Timeout to beat Vercel's 10s limit
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 4000);
 
@@ -49,33 +69,10 @@ const tryOpenRouter = async (prompt) => {
     });
     clearTimeout(timeout);
     const d = await r.json();
-    if (!r.ok) throw new Error(d.error?.message || "OR API Error");
+    if (!r.ok) throw new Error(d.error?.message || "OR Error");
     return d.choices?.[0]?.message?.content;
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error("OpenRouter timed out (4s)");
-    throw e;
-  }
-};
-
-const tryGroq = async (prompt) => {
-  if (!process.env.GROQ_API_KEY) throw new Error("Groq Key missing.");
-  
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 4000);
-
-  try {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "llama3-8b-8192", messages: [{ role: "user", content: prompt }] }),
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error?.message || "Groq API Error");
-    return d.choices?.[0]?.message?.content;
-  } catch (e) {
-    if (e.name === 'AbortError') throw new Error("Groq timed out (4s)");
+    if (e.name === 'AbortError') throw new Error("OR timeout");
     throw e;
   }
 };
@@ -88,11 +85,12 @@ const tryGemini = async (prompt) => {
 };
 
 app.post('/api/analyze-path', async (req, res) => {
-  console.log("\n--- [SPEED SCAN] ---");
+  console.log("\n--- [GROQ PRIMARY SCAN] ---");
   const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
+  
   const providers = [
-    { name: "OpenRouter", fn: tryOpenRouter },
     { name: "Groq", fn: tryGroq },
+    { name: "OpenRouter", fn: tryOpenRouter },
     { name: "Gemini", fn: tryGemini }
   ];
 
@@ -116,4 +114,4 @@ app.post('/api/analyze-path', async (req, res) => {
   return res.status(503).json({ success: false, error: 'All services busy.', details: errors });
 });
 
-app.listen(PORT, () => console.log(`Speed-Boosted Backend live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Groq-Primary Backend live on port ${PORT}`));
