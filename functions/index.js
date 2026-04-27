@@ -14,9 +14,8 @@ const callOpenRouter = async (prompt) => {
       "Content-Type": "application/json" 
     },
     body: JSON.stringify({ 
-      model: "meta-llama/llama-3-8b-instruct:free", 
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" } 
+      model: "google/gemini-2.0-flash-001", 
+      messages: [{ role: "user", content: prompt }] 
     })
   });
   const d = await r.json();
@@ -25,15 +24,18 @@ const callOpenRouter = async (prompt) => {
 };
 
 app.post("/analyze-path", async (req, res) => {
-  const prompt = `Career Counselor Pakistan. suggest 3 careers. Data: ${JSON.stringify(req.body)}`;
+  const prompt = `RETURN ONLY RAW JSON. ${JSON.stringify(req.body)}`;
   
   try {
-    console.log(`[DEBUG] Attempting OpenRouter...`);
     const text = await callOpenRouter(prompt);
     if (text) {
-      const data = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
-      console.log(`✅ SUCCESS: OpenRouter`);
-      return res.json({ success: true, provider: "OpenRouter", data });
+      // Find the JSON block
+      const start = text.indexOf('{');
+      const end = text.lastIndexOf('}');
+      const cleaned = text.substring(start, end + 1).trim();
+      
+      const data = JSON.parse(cleaned);
+      return res.json({ success: true, data });
     }
   } catch (e) {
     console.error(`❌ OpenRouter Failed: ${e.message}`);

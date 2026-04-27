@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
@@ -11,18 +10,31 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-app.get('/api/status', (req, res) => {
-  res.json({
-    keys_loaded: {
-      OpenRouter: !!process.env.OPENROUTER_API_KEY,
-      Groq: !!process.env.GROQ_API_KEY,
-      Gemini: !!process.env.GEMINI_API_KEY
-    },
-    deployment: "Vercel / Groq-Primary"
-  });
-});
+// --- THE ABSOLUTE BLUEPRINT ---
+const SCHEMA_PROMPT = `
+Return ONLY a JSON object. NO EXPLANATION. NO EXTRA TEXT.
+Structure:
+{
+  "careers": [
+    {
+      "title": "string",
+      "match": number,
+      "demandTag": "string",
+      "attributeTag": "string",
+      "role_overview": "string",
+      "why_fit": "string",
+      "income": "string",
+      "time_to_earn": "string",
+      "skills": [{ "name": "string", "simple_explanation": "string", "type": "core|secondary" }],
+      "roadmap": [{ "title": "string", "desc": "string" }]
+    }
+  ],
+  "reality_check": { "competition": "string", "risk": "string", "effort": "string" },
+  "alternative_paths": [{ "title": "string", "description": "string" }],
+  "what_to_avoid": [{ "pitfall": "string", "reason": "string" }]
+}
+`;
 
-const SCHEMA_PROMPT = `Return ONLY JSON object. { "careers": [...], "reality_check": {...}, "alternative_paths": [...], "what_to_avoid": [...] }`;
 const SYSTEM_PROMPT = `YOU ARE A JSON GENERATOR. ${SCHEMA_PROMPT}`;
 
 const cleanJSON = (text) => {
@@ -33,85 +45,55 @@ const cleanJSON = (text) => {
   return text.substring(start, end + 1).trim();
 };
 
-const tryGroq = async (prompt) => {
-  if (!process.env.GROQ_API_KEY) throw new Error("Groq Key missing.");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000); // 5s for Groq
-
-  try {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "llama3-8b-8192", messages: [{ role: "user", content: prompt }] }),
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error?.message || "Groq Error");
-    return d.choices?.[0]?.message?.content;
-  } catch (e) {
-    if (e.name === 'AbortError') throw new Error("Groq timeout");
-    throw e;
-  }
-};
-
 const tryOpenRouter = async (prompt) => {
-  if (!process.env.OPENROUTER_API_KEY) throw new Error("OR Key missing.");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 4000);
-
-  try {
-    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "google/gemini-2.0-flash-001", messages: [{ role: "user", content: prompt }] }),
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error?.message || "OR Error");
-    return d.choices?.[0]?.message?.content;
-  } catch (e) {
-    if (e.name === 'AbortError') throw new Error("OR timeout");
-    throw e;
-  }
-};
-
-const tryGemini = async (prompt) => {
-  if (!process.env.GEMINI_API_KEY) throw new Error("Gemini Key missing.");
-  const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const result = await ai.getGenerativeModel({ model: "gemini-2.0-flash" }).generateContent(prompt);
-  return result.response.text();
+  if (!process.env.OPENROUTER_API_KEY) throw new Error("Key missing.");
+  
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: { 
+      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, 
+      "Content-Type": "application/json" 
+    },
+    body: JSON.stringify({ 
+      model: "google/gemini-2.0-flash-001", 
+      messages: [{ role: "user", content: prompt }] 
+    })
+  });
+  
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || "OR API Error");
+  
+  const aiText = data.choices?.[0]?.message?.content;
+  if (!aiText) throw new Error("No content returned from AI.");
+  
+  return aiText;
 };
 
 app.post('/api/analyze-path', async (req, res) => {
-  console.log("\n--- [GROQ PRIMARY SCAN] ---");
-  const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
+  console.log("\n--- [OPENROUTER-ONLY MODE] New Scan ---");
+  const prompt = `${SYSTEM_PROMPT}\n\nUser Data: ${JSON.stringify(req.body)}`;
   
-  const providers = [
-    { name: "Groq", fn: tryGroq },
-    { name: "OpenRouter", fn: tryOpenRouter },
-    { name: "Gemini", fn: tryGemini }
-  ];
-
-  const errors = [];
-  for (const p of providers) {
+  try {
+    const rawText = await tryOpenRouter(prompt);
+    const cleanedText = cleanJSON(rawText);
+    
+    let parsedData;
     try {
-      console.log(`[DEBUG] Attempting ${p.name}...`);
-      const rawText = await p.fn(prompt);
-      const cleaned = cleanJSON(rawText);
-      const parsedData = JSON.parse(cleaned);
-      if (parsedData && parsedData.careers) {
-        console.log(`✅ SUCCESS: ${p.name}`);
-        return res.json({ success: true, provider: p.name, data: parsedData });
-      }
+      parsedData = JSON.parse(cleanedText);
     } catch (e) {
-      console.error(`❌ ${p.name} failed:`, e.message);
-      errors.push(`${p.name}: ${e.message}`);
+      console.error("❌ JSON Parse Failed. Raw Text:", rawText);
+      return res.status(500).json({ error: "Invalid AI response." });
     }
+    
+    if (parsedData && parsedData.careers) {
+      console.log("FINAL CLEAN DATA:", JSON.stringify(parsedData, null, 2));
+      return res.json({ success: true, data: parsedData });
+    }
+    
+  } catch (err) {
+    console.error(`❌ FAILURE:`, err.message);
+    return res.status(503).json({ error: `System Error: ${err.message}` });
   }
-
-  return res.status(503).json({ success: false, error: 'All services busy.', details: errors });
 });
 
-app.listen(PORT, () => console.log(`Groq-Primary Backend live on port ${PORT}`));
+app.listen(PORT, () => console.log(`OpenRouter-Only Backend live on port ${PORT}`));
