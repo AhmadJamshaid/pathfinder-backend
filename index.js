@@ -13,129 +13,76 @@ const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors()); // Note: In production, consider restricting this to your frontend URL
+app.use(cors());
 app.use(express.json());
 
+// --- FALLBACK CONFIGURATION ---
+// We will try these models in order if one fails.
+const MODEL_FALLBACK_LIST = [
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite-001',
+  'gemini-2.5-flash'
+];
+
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
+  res.json({ status: 'ok', models: MODEL_FALLBACK_LIST });
 });
 
 app.post('/api/analyze-path', async (req, res) => {
   try {
-    const { 
-      interests, strengths, skill_level, work_preference, 
-      career_intent, time_commitment, core_goal, extra_depth 
-    } = req.body;
-
-    const aiProcessingPayload = {
-      interests: interests || "Not provided",
-      skills: strengths || "Not provided",
-      skillLevel: skill_level || "Not provided",
-      preferences: work_preference || "Not provided",
-      intent: career_intent || "Not provided",
-      goal: core_goal || "Not provided",
-      time: time_commitment || "Not provided",
-      additionalContext: extra_depth || "Not provided"
-    };
+    const userData = req.body;
 
     const SYSTEM_PROMPT = `
 You are a friendly career counselor for students in Pakistan. 
-Write like a helpful teacher using simple English.
 Focus on the Pakistan market (PKR salaries).
-Output EXACTLY 3 career options.
-RETURN ONLY VALID JSON. No extra text or markdown.
+Output EXACTLY 3 career options in valid JSON.
     `.trim();
 
-    const userProfileText = `
-User Data: ${JSON.stringify(aiProcessingPayload)}
-    `.trim();
+    const userProfileText = `User Data: ${JSON.stringify(userData)}`;
 
-    const model = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\n${userProfileText}` }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "object",
-          properties: {
-            careers: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  title: { type: "string" },
-                  role_overview: { type: "string" },
-                  why_fit: { type: "string" },
-                  income: { type: "string" },
-                  time_to_earn: { type: "string" },
-                  skills: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: { 
-                        name: { type: "string" }, 
-                        simple_explanation: { type: "string" },
-                        type: { type: "string" } 
-                      }
-                    }
-                  },
-                  roadmap: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: { title: { type: "string" }, desc: { type: "string" } }
-                    }
-                  },
-                  match: { type: "integer" },
-                  demandTag: { type: "string" },
-                  attributeTag: { type: "string" }
-                }
-              }
-            },
-            reality_check: {
-              type: "object",
-              properties: {
-                competition: { type: "string" },
-                risk: { type: "string" },
-                effort: { type: "string" }
-              }
-            },
-            alternative_paths: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: { title: { type: "string" }, description: { type: "string" } }
-              }
-            },
-            what_to_avoid: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: { pitfall: { type: "string" }, reason: { type: "string" } }
-              }
-            }
+    // --- SMART FALLBACK ENGINE ---
+    let lastError = null;
+    let finalResult = null;
+
+    for (const modelName of MODEL_FALLBACK_LIST) {
+      try {
+        console.log(`Attempting analysis with model: ${modelName}...`);
+        const model = ai.getGenerativeModel({ model: modelName });
+        
+        const result = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\n${userProfileText}` }] }],
+          generationConfig: {
+            responseMimeType: "application/json"
           }
-        }
+        });
+
+        const rawText = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+        finalResult = JSON.parse(rawText);
+        
+        console.log(`Success! Request fulfilled by: ${modelName}`);
+        break; // Exit the loop if successful
+
+      } catch (err) {
+        console.error(`Model ${modelName} failed. Reason: ${err.message}`);
+        lastError = err;
+        // Continue to the next model in the list
       }
-    });
+    }
 
-    let rawText = result.response.text();
-    
-    // Safety: Clean AI output if it contains markdown markers
-    rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-
-    try {
-      const analysisResult = JSON.parse(rawText);
-      return res.json({ success: true, data: analysisResult });
-    } catch (parseError) {
-      console.error("JSON Parse Error:", parseError, "Raw Text:", rawText);
-      return res.status(500).json({ error: "AI returned malformed data. Please try again." });
+    if (finalResult) {
+      return res.json({ success: true, data: finalResult });
+    } else {
+      // If we exhausted all models
+      console.error("All models failed. Last error:", lastError);
+      return res.status(500).json({ 
+        error: 'AI is currently overloaded. Please wait 1 minute and try again.',
+        details: lastError?.message
+      });
     }
 
   } catch (error) {
     console.error('API Error:', error);
-    return res.status(500).json({ error: 'Failed to connect to AI engine.' });
+    return res.status(500).json({ error: 'System error. Please contact support.' });
   }
 });
 
