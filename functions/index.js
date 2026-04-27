@@ -1,52 +1,45 @@
 const functions = require("firebase-functions");
 const express = require("express");
 const cors = require("cors");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
 
-const tryGemini = async (prompt) => {
-  const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const result = await ai.getGenerativeModel({ model: "gemini-2.0-flash" }).generateContent(prompt);
-  return result.response.text();
-};
-
-const callAPI = async (url, key, model, prompt) => {
-  const r = await fetch(url, {
+const callOpenRouter = async (prompt) => {
+  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
-    headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], response_format: { type: "json_object" } })
+    headers: { 
+      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, 
+      "Content-Type": "application/json" 
+    },
+    body: JSON.stringify({ 
+      model: "meta-llama/llama-3-8b-instruct:free", 
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" } 
+    })
   });
   const d = await r.json();
+  if (!r.ok) throw new Error(d.error?.message || "OR Error");
   return d.choices?.[0]?.message?.content;
 };
 
 app.post("/analyze-path", async (req, res) => {
   const prompt = `Career Counselor Pakistan. suggest 3 careers. Data: ${JSON.stringify(req.body)}`;
-  const providers = [
-    { name: "Gemini", fn: () => tryGemini(prompt) },
-    { name: "OpenRouter", fn: () => callAPI("https://openrouter.ai/api/v1/chat/completions", process.env.OPENROUTER_API_KEY, "meta-llama/llama-3-8b-instruct:free", prompt) },
-    { name: "Groq", fn: () => callAPI("https://api.groq.com/openai/v1/chat/completions", process.env.GROQ_API_KEY, "llama3-8b-8192", prompt) }
-  ];
-
-  for (const p of providers) {
-    try {
-      console.log(`[DEBUG] Attempting ${p.name}...`);
-      const text = await p.fn();
-      if (!text) continue;
+  
+  try {
+    console.log(`[DEBUG] Attempting OpenRouter...`);
+    const text = await callOpenRouter(prompt);
+    if (text) {
       const data = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
-      if (data && data.careers) {
-        console.log(`✅ SUCCESS: ${p.name}`);
-        return res.json({ success: true, provider: p.name, data });
-      }
-    } catch (e) {
-      console.error(`❌ ${p.name} Failed: ${e.message}`);
+      console.log(`✅ SUCCESS: OpenRouter`);
+      return res.json({ success: true, provider: "OpenRouter", data });
     }
+  } catch (e) {
+    console.error(`❌ OpenRouter Failed: ${e.message}`);
   }
 
-  return res.status(503).json({ error: "All AI providers busy." });
+  return res.status(503).json({ error: "Analysis failed." });
 });
 
 exports.api = functions.https.onRequest(app);

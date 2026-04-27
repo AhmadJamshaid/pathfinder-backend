@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
@@ -20,77 +19,56 @@ const cleanJSON = (text) => {
   return text.replace(/```json/g, '').replace(/```/g, '').trim();
 };
 
-// --- ENGINES ---
-
-const tryGemini = async (prompt) => {
-  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing.");
-  const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const result = await ai.getGenerativeModel({ model: "gemini-2.0-flash" }).generateContent(prompt);
-  const response = await result.response;
-  return response.text();
-};
+// --- SINGLE STABLE ENGINE: OPENROUTER ---
 
 const tryOpenRouter = async (prompt) => {
   if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY missing.");
+  
   const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
-    headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ "model": "meta-llama/llama-3-8b-instruct:free", "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"} })
+    headers: { 
+      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, 
+      "Content-Type": "application/json" 
+    },
+    body: JSON.stringify({ 
+      "model": "meta-llama/llama-3-8b-instruct:free", 
+      "messages": [{"role": "user", "content": prompt}], 
+      "response_format": {"type": "json_object"} 
+    })
   });
+  
   const d = await r.json();
-  if (!r.ok) throw new Error(d.error?.message || "OR HTTP Error");
-  return d.choices?.[0]?.message?.content;
-};
-
-const tryGroq = async (prompt) => {
-  if (!process.env.GROQ_API_KEY) throw new Error("GROQ_API_KEY missing.");
-  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ "model": "llama3-8b-8192", "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"} })
-  });
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.error?.message || "Groq HTTP Error");
-  return d.choices?.[0]?.message?.content;
+  if (!r.ok) throw new Error(d.error?.message || "OpenRouter HTTP Error");
+  
+  const content = d.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenRouter returned no content.");
+  
+  return content;
 };
 
 app.post('/api/analyze-path', async (req, res) => {
-  console.log("\n--- [START] New Career Scan ---");
+  console.log("\n--- [SIMPLIFIED MODE] New Career Scan (OpenRouter Only) ---");
   const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
   
-  const providers = [
-    { name: "Gemini", fn: tryGemini },
-    { name: "OpenRouter", fn: tryOpenRouter },
-    { name: "Groq", fn: tryGroq }
-  ];
-
-  let finalResult = null;
-  let successfulProvider = null;
-
-  for (const p of providers) {
-    try {
-      console.log(`[DEBUG] Trying ${p.name}...`);
-      const rawText = await p.fn(prompt);
-      
-      const cleaned = cleanJSON(rawText);
-      finalResult = JSON.parse(cleaned);
-      
-      if (finalResult && finalResult.careers) {
-        successfulProvider = p.name;
-        console.log(`✅ SUCCESS: Result found using ${p.name}`);
-        break;
-      }
-    } catch (e) {
-      console.error(`❌ ${p.name} Failed: ${e.message}`);
+  try {
+    console.log(`[DEBUG] Requesting analysis from OpenRouter...`);
+    const rawText = await tryOpenRouter(prompt);
+    
+    const cleaned = cleanJSON(rawText);
+    const finalResult = JSON.parse(cleaned);
+    
+    if (finalResult && finalResult.careers) {
+      console.log(`✅ SUCCESS: Analysis fulfilled by OpenRouter`);
+      return res.json({ success: true, provider: "OpenRouter", data: finalResult });
     }
+  } catch (e) {
+    console.error(`❌ OpenRouter Failed:`, e.message);
   }
 
-  if (finalResult) {
-    return res.json({ success: true, provider: successfulProvider, data: finalResult });
-  }
-
-  console.error("⛔ [CRITICAL] All providers failed.");
-  return res.status(503).json({ error: 'All AI services are currently unavailable. Please try again later.' });
+  console.error("⛔ [CRITICAL] OpenRouter failed to fulfill the request.");
+  return res.status(503).json({ 
+    error: 'AI analysis failed. Please check your OpenRouter API Key in Vercel.' 
+  });
 });
 
-app.listen(PORT, () => console.log(`Backend server live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Simplified Backend live on port ${PORT}`));
