@@ -55,32 +55,23 @@ app.post('/api/analyze-path', async (req, res) => {
     };
 
     const SYSTEM_PROMPT = `
-You are a friendly and helpful career counselor for students. Your job is to give clear, easy-to-understand career advice.
+You are a friendly and helpful career counselor for students in Pakistan. Your job is to give clear, easy-to-understand career advice.
 
 **GLOBAL INSTRUCTION:**
 - All output must be easy to understand for a beginner student. 
-- If a sentence is complex, rewrite it in simpler words.
-
-**BEGINNER LEVEL INSTRUCTION:**
+- Rewrite complex sentences in simpler words.
 - Explain everything at a beginner level, like teaching a student with no prior knowledge.
-- Imagine you are talking to someone who has never heard of these jobs before.
-
-**TONE & STYLE (VERY IMPORTANT):**
 - Write like a helpful teacher, not like a corporate report.
-- Do not use complex sentences or difficult vocabulary.
-- Do not use long paragraphs. Keep descriptions short and sweet.
-- Use very simple, easy English.
-- Avoid technical jargon.
-- Use short sentences.
-- Explain things in plain English.
-- Be honest but encouraging.
-
-**GEOGRAPHIC FOCUS:**
-- All advice must be specifically for the Pakistan market. 
+- Use short sentences and plain English. Avoid technical jargon.
+- Suggest jobs that are available in Pakistan or as remote work from Pakistan.
 - Use local salary estimates in PKR.
 
+**HANDLING MISSING DATA:**
+- If data is "Not provided", make your best guess or provide general helpful advice.
+- ALWAYS provide exactly 3 career options.
+
 **STRICT OUTPUT PROTOCOL:**
-Return ONLY a valid JSON object with: careers (exactly 3 options), reality_check, alternative_paths, and what_to_avoid.
+Return ONLY a valid JSON object. No extra text.
     `.trim();
 
     const userProfileText = `
@@ -89,36 +80,88 @@ User Profile:
 - Strengths: ${aiProcessingPayload.skills}
 - Skill Level: ${aiProcessingPayload.skillLevel}
 - Goal: ${aiProcessingPayload.goal}
-- Time Available: ${aiProcessingPayload.time}
-- Work Preference: ${aiProcessingPayload.preferences}
-- Career Intent: ${aiProcessingPayload.intent}
-- Additional Context: ${aiProcessingPayload.additionalContext}
+- Time: ${aiProcessingPayload.time}
+- Context: ${aiProcessingPayload.additionalContext}
     `.trim();
 
     const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
     
-    // Stable method for content generation with retry logic
-    const generateWithRetry = async (prompt, attempts = 3) => {
-      for (let i = 0; i < attempts; i++) {
-        try {
-          const result = await model.generateContent({
-            contents: [{ role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\n${prompt}` }] }],
-            generationConfig: {
-              responseMimeType: "application/json"
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\n${userProfileText}` }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "object",
+          properties: {
+            careers: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  role_overview: { type: "string" },
+                  why_fit: { type: "string" },
+                  income: { type: "string" },
+                  time_to_earn: { type: "string" },
+                  skills: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: { 
+                        name: { type: "string" }, 
+                        simple_explanation: { type: "string" },
+                        type: { type: "string" } 
+                      },
+                      required: ["name", "simple_explanation", "type"]
+                    }
+                  },
+                  roadmap: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: { title: { type: "string" }, desc: { type: "string" } },
+                      required: ["title", "desc"]
+                    }
+                  },
+                  match: { type: "integer" },
+                  demandTag: { type: "string" },
+                  attributeTag: { type: "string" }
+                },
+                required: ["title", "role_overview", "why_fit", "income", "time_to_earn", "skills", "roadmap", "match", "demandTag", "attributeTag"]
+              }
+            },
+            reality_check: {
+              type: "object",
+              properties: {
+                competition: { type: "string" },
+                risk: { type: "string" },
+                effort: { type: "string" }
+              },
+              required: ["competition", "risk", "effort"]
+            },
+            alternative_paths: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: { title: { type: "string" }, description: { type: "string" } },
+                required: ["title", "description"]
+              }
+            },
+            what_to_avoid: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: { pitfall: { type: "string" }, reason: { type: "string" } },
+                required: ["pitfall", "reason"]
+              }
             }
-          });
-          return result.response.text();
-        } catch (err) {
-          if ((err.status === 503 || err.status === 429) && i < attempts - 1) {
-            await new Promise(r => setTimeout(r, 2000 * (i + 1)));
-            continue;
-          }
-          throw err;
+          },
+          required: ["careers", "reality_check", "alternative_paths", "what_to_avoid"]
         }
       }
-    };
+    });
 
-    const rawText = await generateWithRetry(userProfileText);
+    const rawText = result.response.text();
     const analysisResult = JSON.parse(rawText);
 
     return res.json({
@@ -132,7 +175,6 @@ User Profile:
   }
 });
 
-// Initialize Server
 app.listen(PORT, () => {
   console.log(`Server is running at http://localhost:${PORT}`);
 });
