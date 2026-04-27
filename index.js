@@ -125,10 +125,10 @@ User Profile:
     `.trim();
 
     // Helper for retrying AI requests
-    const generateWithRetry = async (model, payload, attempts = 5) => {
+    const generateWithRetry = async (payload, attempts = 5) => {
       for (let i = 0; i < attempts; i++) {
         try {
-          return await model.generateContent(payload);
+          return await ai.models.generateContent(payload);
         } catch (err) {
           const isRetryable = err.status === 503 || err.status === 429;
           if (isRetryable && i < attempts - 1) {
@@ -141,8 +141,8 @@ User Profile:
       }
     };
 
-    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const response = await generateWithRetry(model, {
+    const response = await generateWithRetry({
+      model: 'gemini-1.5-flash',
       contents: [{ role: 'user', parts: [{ text: userProfileText }] }],
       generationConfig: {
         responseMimeType: "application/json",
