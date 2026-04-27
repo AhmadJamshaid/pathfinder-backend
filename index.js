@@ -11,8 +11,8 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-const SCHEMA_PROMPT = `Return ONLY JSON object. No extra text. { "careers": [...], "reality_check": {...}, "alternative_paths": [...], "what_to_avoid": [...] }`;
-const SYSTEM_PROMPT = `YOU ARE A JSON GENERATOR. Career Counselor Pakistan. ${SCHEMA_PROMPT}`;
+const SCHEMA_PROMPT = `Return ONLY JSON object. { "careers": [...], "reality_check": {...}, "alternative_paths": [...], "what_to_avoid": [...] }`;
+const SYSTEM_PROMPT = `YOU ARE A JSON GENERATOR. ${SCHEMA_PROMPT}`;
 
 const cleanJSON = (text) => {
   if (!text) return "";
@@ -22,15 +22,13 @@ const cleanJSON = (text) => {
   return text.substring(start, end + 1).trim();
 };
 
-// --- ENGINES WITH INTERNAL RETRIES ---
+// --- ENGINES ---
 
 const tryOpenRouter = async (prompt) => {
   if (!process.env.OPENROUTER_API_KEY) throw new Error("OR Key missing.");
   const models = ["google/gemini-2.0-flash-001", "meta-llama/llama-3.1-8b-instruct:free"];
-  
   for (const model of models) {
     try {
-      console.log(`[DEBUG] OpenRouter: Trying model ${model}...`);
       const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
@@ -38,18 +36,17 @@ const tryOpenRouter = async (prompt) => {
       });
       const d = await r.json();
       if (r.ok && d.choices?.[0]?.message?.content) return d.choices[0].message.content;
-    } catch (e) { console.warn(`Model ${model} failed on OR.`); }
+      console.warn(`[DEBUG] OR Model ${model} failed: ${d.error?.message || r.status}`);
+    } catch (e) {}
   }
-  throw new Error("OpenRouter exhausted all models.");
+  throw new Error("OpenRouter models exhausted.");
 };
 
 const tryGroq = async (prompt) => {
   if (!process.env.GROQ_API_KEY) throw new Error("Groq Key missing.");
   const models = ["llama3-8b-8192", "mixtral-8x7b-32768"];
-  
   for (const model of models) {
     try {
-      console.log(`[DEBUG] Groq: Trying model ${model}...`);
       const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
@@ -57,9 +54,10 @@ const tryGroq = async (prompt) => {
       });
       const d = await r.json();
       if (r.ok && d.choices?.[0]?.message?.content) return d.choices[0].message.content;
-    } catch (e) { console.warn(`Model ${model} failed on Groq.`); }
+      console.warn(`[DEBUG] Groq Model ${model} failed: ${d.error?.message || r.status}`);
+    } catch (e) {}
   }
-  throw new Error("Groq exhausted all models.");
+  throw new Error("Groq models exhausted.");
 };
 
 const tryGemini = async (prompt) => {
@@ -70,9 +68,14 @@ const tryGemini = async (prompt) => {
 };
 
 app.post('/api/analyze-path', async (req, res) => {
-  console.log("\n--- [ULTRA-STABILITY SCAN] ---");
+  // ✅ HEALTH CHECK (VERY IMPORTANT)
+  console.log("\n--- [HEALTH CHECK] Keys loaded:", {
+    OR: !!process.env.OPENROUTER_API_KEY,
+    Groq: !!process.env.GROQ_API_KEY,
+    Gemini: !!process.env.GEMINI_API_KEY
+  });
+
   const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
-  
   const providers = [
     { name: "OpenRouter", fn: tryOpenRouter },
     { name: "Groq", fn: tryGroq },
@@ -81,13 +84,12 @@ app.post('/api/analyze-path', async (req, res) => {
 
   for (const p of providers) {
     try {
-      console.log(`[PROCESS] Provider: ${p.name}...`);
+      console.log(`[PROCESS] Trying ${p.name}...`);
       const rawText = await p.fn(prompt);
       const cleaned = cleanJSON(rawText);
       const parsedData = JSON.parse(cleaned);
-      
       if (parsedData && parsedData.careers) {
-        console.log(`✅ SUCCESS: Fulfilled by ${p.name}`);
+        console.log(`✅ SUCCESS: ${p.name}`);
         return res.json({ success: true, provider: p.name, data: parsedData });
       }
     } catch (e) {
@@ -95,7 +97,7 @@ app.post('/api/analyze-path', async (req, res) => {
     }
   }
 
-  return res.status(503).json({ error: 'All AI services exhausted. Please wait 1 minute.' });
+  return res.status(503).json({ error: 'All AI services exhausted.' });
 });
 
-app.listen(PORT, () => console.log(`Ultra-Stability Backend live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Health-Check Backend live on port ${PORT}`));
