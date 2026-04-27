@@ -3,7 +3,6 @@ const express = require("express");
 const cors = require("cors");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// In Cloud Functions, we use environment variables
 const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const app = express();
@@ -13,14 +12,8 @@ app.use(express.json());
 app.post("/analyze-path", async (req, res) => {
   try {
     const { 
-      interests, 
-      strengths, 
-      skill_level, 
-      work_preference, 
-      career_intent, 
-      time_commitment, 
-      core_goal, 
-      extra_depth 
+      interests, strengths, skill_level, work_preference, 
+      career_intent, time_commitment, core_goal, extra_depth 
     } = req.body;
 
     const aiProcessingPayload = {
@@ -35,17 +28,12 @@ app.post("/analyze-path", async (req, res) => {
     };
 
     const SYSTEM_PROMPT = `
-You are a friendly and helpful career counselor for students. Your job is to give clear, easy-to-understand career advice.
-Output exactly 3 specific career suggestions for the Pakistan market in valid JSON format.
+You are a friendly career counselor for students in Pakistan. 
+Focus on the Pakistan market (PKR salaries).
+Output EXACTLY 3 career options in valid JSON.
     `.trim();
 
-    const userProfileText = `
-User Profile:
-- Interests: ${aiProcessingPayload.interests}
-- Strengths: ${aiProcessingPayload.skills}
-- Goal: ${aiProcessingPayload.goal}
-- Context: ${aiProcessingPayload.additionalContext}
-    `.trim();
+    const userProfileText = `User Data: ${JSON.stringify(aiProcessingPayload)}`;
 
     const model = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
     
@@ -56,17 +44,19 @@ User Profile:
       }
     });
 
-    const rawText = result.response.text();
-    const analysisResult = JSON.parse(rawText);
+    let rawText = result.response.text();
+    rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
 
-    return res.json({
-      success: true,
-      data: analysisResult
-    });
+    try {
+      const analysisResult = JSON.parse(rawText);
+      return res.json({ success: true, data: analysisResult });
+    } catch (parseError) {
+      return res.status(500).json({ error: "Malformed AI response." });
+    }
 
   } catch (error) {
-    console.error('Error in analyze-path:', error);
-    return res.status(500).json({ error: 'Failed to process AI career path analysis.' });
+    console.error('Error:', error);
+    return res.status(500).json({ error: 'Server error.' });
   }
 });
 
