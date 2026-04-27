@@ -11,36 +11,8 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// --- THE MASTER BLUEPRINT (Shared by all AI providers) ---
-const SCHEMA_PROMPT = `
-You must return ONLY a JSON object with this exact structure:
-{
-  "careers": [
-    {
-      "title": "string",
-      "role_overview": "string",
-      "why_fit": "string",
-      "income": "string (in PKR)",
-      "time_to_earn": "string",
-      "skills": [{ "name": "string", "simple_explanation": "string", "type": "Technical|Soft|Tool" }],
-      "roadmap": [{ "title": "string", "desc": "string" }],
-      "match": number (0-100),
-      "demandTag": "string (e.g. High Demand)",
-      "attributeTag": "string (e.g. Creativity)"
-    }
-  ],
-  "reality_check": { "competition": "string", "risk": "string", "effort": "string" },
-  "alternative_paths": [{ "title": "string", "description": "string" }],
-  "what_to_avoid": [{ "pitfall": "string", "reason": "string" }]
-}
-`;
-
-const SYSTEM_PROMPT = `
-You are a friendly career counselor for students in Pakistan. 
-Write in simple English like a helpful teacher.
-Suggest exactly 3 career options.
-${SCHEMA_PROMPT}
-`.trim();
+const SCHEMA_PROMPT = `Return ONLY valid JSON: { "careers": [...], "reality_check": {...}, "alternative_paths": [...], "what_to_avoid": [...] }`;
+const SYSTEM_PROMPT = `Career Counselor Pakistan. Simple English. Suggest 3 careers. ${SCHEMA_PROMPT}`;
 
 // --- PROVIDER ENGINES ---
 
@@ -49,11 +21,7 @@ const generateWithOpenRouter = async (prompt) => {
   const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ 
-      "model": "meta-llama/llama-3-8b-instruct:free", 
-      "messages": [{ "role": "user", "content": prompt }],
-      "response_format": { "type": "json_object" } // Forces JSON output
-    })
+    body: JSON.stringify({ "model": "meta-llama/llama-3-8b-instruct:free", "messages": [{ "role": "user", "content": prompt }], "response_format": { "type": "json_object" } })
   });
   const data = await resp.json();
   return data.choices[0].message.content;
@@ -64,11 +32,7 @@ const generateWithGroq = async (prompt) => {
   const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { "Authorization": `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ 
-      "model": "llama3-8b-8192", 
-      "messages": [{ "role": "user", "content": prompt }],
-      "response_format": { "type": "json_object" } 
-    })
+    body: JSON.stringify({ "model": "llama3-8b-8192", "messages": [{ "role": "user", "content": prompt }], "response_format": { "type": "json_object" } })
   });
   const data = await resp.json();
   return data.choices[0].message.content;
@@ -87,46 +51,55 @@ const generateWithCohere = async (prompt) => {
 
 app.post('/api/analyze-path', async (req, res) => {
   try {
-    const prompt = `${SYSTEM_PROMPT}\n\nUser Profile Data: ${JSON.stringify(req.body)}`;
+    const prompt = `${SYSTEM_PROMPT}\n\nData: ${JSON.stringify(req.body)}`;
     let finalResult = null;
-    let lastError = null;
+    let successfulProvider = null;
 
-    // TIER 1: GEMINI
+    // 1. Try Gemini
     try {
+      console.log("Attempting Gemini...");
       const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
       const result = await ai.getGenerativeModel({ model: "gemini-2.0-flash" }).generateContent(prompt);
       finalResult = JSON.parse(result.response.text().replace(/```json/g, '').replace(/```/g, '').trim());
-    } catch (e) { lastError = e; console.log("Gemini failed, trying fallbacks..."); }
+      if (finalResult) successfulProvider = "Gemini";
+    } catch (e) { console.error("Gemini failed."); }
 
-    // FALLBACK CHAIN
+    // 2. Try Fallbacks
     if (!finalResult) {
-      const providers = [
+      const fallbacks = [
         { name: "OpenRouter", fn: generateWithOpenRouter },
         { name: "Groq", fn: generateWithGroq },
         { name: "Cohere", fn: generateWithCohere }
       ];
 
-      for (const provider of providers) {
+      for (const f of fallbacks) {
         try {
-          console.log(`Attempting fallback: ${provider.name}...`);
-          const text = await provider.fn(prompt);
+          console.log(`Attempting ${f.name}...`);
+          const text = await f.fn(prompt);
           finalResult = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
           if (finalResult) {
-            console.log(`Success! Request fulfilled by ${provider.name}`);
+            successfulProvider = f.name;
             break;
           }
-        } catch (e) { lastError = e; console.error(`${provider.name} failed.`); }
+        } catch (e) { console.error(`${f.name} failed.`); }
       }
     }
 
     if (finalResult && finalResult.careers) {
-      return res.json({ success: true, data: finalResult });
+      console.log(`SUCCESS: Analysis fulfilled by ${successfulProvider}`);
+      return res.json({ 
+        success: true, 
+        provider: successfulProvider,
+        data: finalResult 
+      });
     }
 
-    return res.status(500).json({ error: 'All providers failed to return valid data.', detail: lastError?.message });
+    // Final failure message as requested
+    console.error("CRITICAL: All AI providers failed.");
+    return res.status(503).json({ error: 'All AI services are currently unavailable. Please try again later.' });
 
   } catch (error) {
-    return res.status(500).json({ error: 'System error.' });
+    return res.status(500).json({ error: 'Internal system error.' });
   }
 });
 
