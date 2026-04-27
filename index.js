@@ -16,38 +16,41 @@ const SYSTEM_PROMPT = `Career Counselor Pakistan. suggest 3 careers. ${SCHEMA_PR
 
 // --- UTILS ---
 const cleanJSON = (text) => {
-  if (!text) return "";
-  return text.replace(/```json/g, '').replace(/```/g, '').trim();
+  // CRITICAL FIX: Ensure text exists before using .replace()
+  if (!text) {
+    throw new Error("Empty response from AI");
+  }
+  
+  // Safe to use replace now
+  const safeResult = text.replace(/```json/g, '').replace(/```/g, '').trim();
+  return safeResult;
 };
 
 // --- ENGINES ---
 
 const tryGemini = async (prompt) => {
-  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is missing.");
+  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing.");
   const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const result = await ai.getGenerativeModel({ model: "gemini-2.0-flash" }).generateContent(prompt);
   const response = await result.response;
   const text = response.text();
-  if (!text) throw new Error("Gemini returned empty text.");
-  return text;
+  return text; // Main loop handles the null check via cleanJSON
 };
 
 const tryOpenRouter = async (prompt) => {
-  if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is missing.");
+  if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY missing.");
   const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ "model": "meta-llama/llama-3-8b-instruct:free", "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"} })
   });
   const d = await r.json();
-  if (!r.ok) throw new Error(d.error?.message || "OpenRouter HTTP Error");
-  const content = d.choices?.[0]?.message?.content;
-  if (!content) throw new Error("OpenRouter returned no content.");
-  return content;
+  if (!r.ok) throw new Error(d.error?.message || "OR HTTP Error");
+  return d.choices?.[0]?.message?.content;
 };
 
 const tryGroq = async (prompt) => {
-  if (!process.env.GROQ_API_KEY) throw new Error("GROQ_API_KEY is missing.");
+  if (!process.env.GROQ_API_KEY) throw new Error("GROQ_API_KEY missing.");
   const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { "Authorization": `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
@@ -55,13 +58,11 @@ const tryGroq = async (prompt) => {
   });
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message || "Groq HTTP Error");
-  const content = d.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Groq returned no content.");
-  return content;
+  return d.choices?.[0]?.message?.content;
 };
 
 const tryCohere = async (prompt) => {
-  if (!process.env.COHERE_API_KEY) throw new Error("COHERE_API_KEY is missing.");
+  if (!process.env.COHERE_API_KEY) throw new Error("COHERE_API_KEY missing.");
   const r = await fetch("https://api.cohere.ai/v1/chat", {
     method: "POST",
     headers: { "Authorization": `Bearer ${process.env.COHERE_API_KEY}`, "Content-Type": "application/json" },
@@ -69,9 +70,7 @@ const tryCohere = async (prompt) => {
   });
   const d = await r.json();
   if (!r.ok) throw new Error(d.message || "Cohere HTTP Error");
-  const text = d.text;
-  if (!text) throw new Error("Cohere returned no text.");
-  return text;
+  return d.text;
 };
 
 app.post('/api/analyze-path', async (req, res) => {
@@ -93,6 +92,7 @@ app.post('/api/analyze-path', async (req, res) => {
       console.log(`Phase: Attempting ${p.name}...`);
       const rawText = await p.fn(prompt);
       
+      // cleanJSON will throw if rawText is empty/null
       const cleaned = cleanJSON(rawText);
       finalResult = JSON.parse(cleaned);
       
@@ -110,7 +110,7 @@ app.post('/api/analyze-path', async (req, res) => {
     return res.json({ success: true, provider: successfulProvider, data: finalResult });
   }
 
-  return res.status(503).json({ error: 'All AI services are currently unavailable. Please check your API keys in Vercel.' });
+  return res.status(503).json({ error: 'All AI services are currently unavailable. Please try again later.' });
 });
 
 app.listen(PORT, () => console.log(`Server live on port ${PORT}`));
