@@ -54,18 +54,6 @@ const tryGroq = async (prompt) => {
   return d.choices?.[0]?.message?.content;
 };
 
-const tryCohere = async (prompt) => {
-  if (!process.env.COHERE_API_KEY) throw new Error("COHERE_API_KEY missing.");
-  const r = await fetch("https://api.cohere.ai/v1/chat", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${process.env.COHERE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ "model": "command-r-plus", "message": prompt })
-  });
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.message || "Cohere HTTP Error");
-  return d.text;
-};
-
 app.post('/api/analyze-path', async (req, res) => {
   console.log("\n--- [START] New Career Scan ---");
   const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
@@ -73,8 +61,7 @@ app.post('/api/analyze-path', async (req, res) => {
   const providers = [
     { name: "Gemini", fn: tryGemini },
     { name: "OpenRouter", fn: tryOpenRouter },
-    { name: "Groq", fn: tryGroq },
-    { name: "Cohere", fn: tryCohere }
+    { name: "Groq", fn: tryGroq }
   ];
 
   let finalResult = null;
@@ -95,7 +82,6 @@ app.post('/api/analyze-path', async (req, res) => {
       }
     } catch (e) {
       console.error(`❌ ${p.name} Failed: ${e.message}`);
-      // Loop continues to next provider
     }
   }
 
@@ -103,8 +89,8 @@ app.post('/api/analyze-path', async (req, res) => {
     return res.json({ success: true, provider: successfulProvider, data: finalResult });
   }
 
-  console.error("⛔ [CRITICAL] All 4 providers failed to fulfill the request.");
+  console.error("⛔ [CRITICAL] All providers failed.");
   return res.status(503).json({ error: 'All AI services are currently unavailable. Please try again later.' });
 });
 
-app.listen(PORT, () => console.log(`Backend server listening on port ${PORT}`));
+app.listen(PORT, () => console.log(`Backend server live on port ${PORT}`));
