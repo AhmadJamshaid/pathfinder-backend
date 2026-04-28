@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
@@ -74,23 +75,32 @@ const cleanJSON = (text) => {
   return text.substring(start, end + 1).trim();
 };
 
-const tryOpenRouter = async (prompt) => {
-  if (!process.env.OPENROUTER_API_KEY) throw new Error("Key missing.");
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "google/gemini-2.0-flash-001", messages: [{ role: "user", content: prompt }] })
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message || "OR API Error");
-  return data.choices?.[0]?.message?.content;
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const tryGeminiDirect = async (prompt, retries = 1) => {
+  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing.");
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+  
+  try {
+    const result = await model.generateContent(prompt);
+    return result.response.text();
+  } catch (error) {
+    if (retries > 0) {
+      console.log(`⚠️ API failed. Retrying in 1 second... (${error.message})`);
+      await sleep(1000);
+      return tryGeminiDirect(prompt, retries - 1);
+    }
+    console.error("Generative AI ERROR:", error);
+    throw error;
+  }
 };
 
 app.post('/api/analyze-path', async (req, res) => {
   console.log("\n--- [ULTRA-DETAIL MODE] New Scan ---");
   const prompt = `${SYSTEM_PROMPT}\n\nUser Profile: ${JSON.stringify(req.body)}`;
   try {
-    const rawText = await tryOpenRouter(prompt);
+    const rawText = await tryGeminiDirect(prompt);
     const cleanedText = cleanJSON(rawText);
     const parsedData = JSON.parse(cleanedText);
     if (parsedData && parsedData.careers) {
